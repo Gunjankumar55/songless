@@ -1149,7 +1149,45 @@ function poolFor(catKey){
 const SCHEDULE = [0.2, 0.5, 2, 4, 8, 16]; // seconds unlocked per attempt, cumulative
 const SEG_WEIGHTS = [0.2, 0.3, 1.5, 2, 4, 8]; // incremental deltas between steps — these sum to 16
 
+/* =========================================================
+   STATE
+   ========================================================= */
 let category = "all";
+let players = [];
+let playersOpen = false;
+let round = null; // {song, meta, attempts:[], finished, won}
+const audioEl = new Audio();
+audioEl.preload = "auto";   // buffer ahead so seek-to-zero is instant on rapid replays
+let playTimer = null;
+let progressRaf = null;
+function resetLiveProgress(){
+  if(progressRaf){ cancelAnimationFrame(progressRaf); progressRaf = null; }
+  const wrap = $("liveProgress"), fill = $("liveProgressFill");
+  if(wrap) wrap.classList.remove("active");
+  if(fill) fill.style.width = "0%";
+}
+
+const $ = id => document.getElementById(id);
+
+/* =========================================================
+   iTunes lookup — needs a real previewUrl for this game
+   ========================================================= */
+async function lookupTrack(title, artist){
+  const term = encodeURIComponent(`${title} ${artist}`);
+  const url = `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=3`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error("fetch failed");
+  const data = await res.json();
+  if(!data.results || !data.results.length) throw new Error("no results");
+  const hit = data.results.find(r=>r.previewUrl) || null;
+  if(!hit) throw new Error("no preview available");
+  return {
+    previewUrl: hit.previewUrl,
+    artwork: hit.artworkUrl100 ? hit.artworkUrl100.replace("100x100","300x300") : null,
+    canonicalTitle: hit.trackName || title,
+    canonicalArtist: hit.artistName || artist
+  };
+}
 
 /* =========================================================
    TABS
@@ -1161,7 +1199,7 @@ function renderTabs(){
     b.className = "tab" + (c.key===category ? " active":"");
     const count = poolFor(c.key).length;
     b.innerHTML = `${escapeHtml(c.label)}<span class="tab-count">${count}</span>`;
-    b.onclick = ()=>{ if(category!==c.key){ category=c.key; renderTabs(); } };
+    b.onclick = ()=>{ if(category!==c.key){ category=c.key; renderTabs(); startRound(); } };
     wrap.appendChild(b);
   });
   const activeCat = CATS.find(c=>c.key===category);
@@ -1172,12 +1210,251 @@ function renderTabs(){
 }
 
 /* =========================================================
+   ROUND FLOW
+   ========================================================= */
+async function startRound(){
+  playGeneration++;   // invalidate anything still queued from the last round
+  haltPlayback();
+  resetLiveProgress();
+  $("revealArea").classList.add("hidden");
+  $("guessArea").classList.remove("hidden");
+  $("searchInput").value = "";
+  $("suggestions").classList.add("hidden");
+
+  renderAttempts([], -1, true);
+  $("durLabel").textContent = "finding a track…";
+  $("btnPlay").disabled = true;
+
+  const pool = poolFor(category);
+  const prevTitle = round && round.meta ? round.meta.canonicalTitle : null;
+  let candidates = shuffle([...pool]);
+  if(prevTitle && candidates.length > 1){
+    candidates = candidates.filter(s=>s.title !== prevTitle).concat(candidates.filter(s=>s.title===prevTitle));
+  }
+
+  let meta = null, songDef = null;
+  for(let i=0;i<candidates.length && !meta;i++){
+    songDef = candidates[i];
+    try{ meta = await lookupTrack(songDef.title, songDef.artist); }
+    catch(e){ meta = null; }
+  }
+
+  if(!meta){
+    $("durLabel").textContent = "";
+    $("guessArea").innerHTML = `<div class="status-msg">Couldn't load a playable clip for this category right now. Try another tab, or try again in a moment.</div>`;
+    return;
+  }
+
+  round = { pool, songDef, meta, attempts: [], finished:false, won:false };
+  audioEl.src = meta.previewUrl;
+  audioEl.load();   // start buffering now, not on first press
+  renderRound();
+}
+
+function currentIndex(){ return round.attempts.length; } // 0-based index into SCHEDULE
+function renderRound(){
+  const idx = Math.min(currentIndex(), SCHEDULE.length-1);
+  $("durLabel").textContent = `${SCHEDULE[idx]} second${SCHEDULE[idx]===1?"":"s"}`;
+  renderBar(idx);
+  renderAttempts(round.attempts, idx);
+  $("btnPlay").disabled = round.finished;
+}
+
+function renderBar(idx){
+  const bar = $("durBar"); bar.innerHTML = "";
+  SEG_WEIGHTS.forEach((w,i)=>{
+    const seg = document.createElement("div");
+    seg.className = "dur-seg" + (i<=idx ? " filled":"");
+    seg.style.flex = w;
+    bar.appendChild(seg);
+  });
+}
+
+function renderAttempts(attempts, activeIdx, loading){
+  const wrap = $("attempts"); wrap.innerHTML = "";
+  for(let i=0;i<SCHEDULE.length;i++){
+    const box = document.createElement("div");
+    const a = attempts[i];
+    let cls = "attempt-box";
+    let text = "";
+    if(loading){
+      cls += " loading";
+    } else if(a){
+      if(a.correct){ cls += " correct"; text = `✓ ${a.label}`; }
+      else if(a.skipped){ cls += " skipped"; text = "Skipped"; }
+      else { cls += " wrong"; text = `✕ ${a.label}`; }
+    } else if(i === activeIdx){
+      cls += " current"; text = "";
+    }
+    box.className = cls;
+    if(!loading){
+      const slot = document.createElement("span");
+      slot.className = "attempt-slot";
+      slot.textContent = i+1;
+      const txt = document.createElement("span");
+      txt.className = "attempt-text";
+      txt.textContent = text;
+      box.appendChild(slot);
+      box.appendChild(txt);
+    }
+    wrap.appendChild(box);
+  }
+}
+
+/* ---- keyboard: space replays the clip (unless typing in the search box) ---- */
+document.addEventListener("keydown", (e)=>{
+  if(e.code !== "Space") return;
+  const t = e.target;
+  if(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+  if(!round || round.finished) return;
+  e.preventDefault();
+  if(e.repeat) return; // holding space would otherwise machine-gun restarts
+  playClip();
+});
+
+/* ---- playback ----------------------------------------------------------
+   Every press bumps playGeneration. Any timer, animation frame, or cleanup
+   still queued from an earlier press checks its own generation and bails,
+   so spamming space restarts cleanly instead of letting a stale cleanup
+   blank the progress bar mid-clip.
+   ----------------------------------------------------------------------- */
+let playGeneration = 0;
+let cleanupTimer = null;
+
+function haltPlayback(){
+  clearTimeout(playTimer); playTimer = null;
+  clearTimeout(cleanupTimer); cleanupTimer = null;
+  if(progressRaf){ cancelAnimationFrame(progressRaf); progressRaf = null; }
+  try{ audioEl.pause(); }catch(e){}
+}
+
+function playClip(overrideMs, allowFinished){
+  if(!round) return;
+  if(round.finished && !allowFinished) return;
+  const idx = Math.min(currentIndex(), SCHEDULE.length-1);
+  const durMs = overrideMs != null ? overrideMs : SCHEDULE[idx]*1000;
+
+  const gen = ++playGeneration;
+  haltPlayback();
+
+  try{ audioEl.currentTime = 0; }catch(e){ /* not seekable yet — will still play from start */ }
+  const p = audioEl.play();
+  if(p && typeof p.catch === "function") p.catch(()=>{}); // ignore AbortError from a rapid restart
+
+  const btn = $("btnPlay");
+  const liveWrap = $("liveProgress"), liveFill = $("liveProgressFill");
+  btn.classList.add("playing");
+  liveWrap.classList.add("active");
+  liveFill.style.width = "0%";
+
+  const startTs = performance.now();
+  (function tick(){
+    if(gen !== playGeneration) return; // superseded by a newer press
+    const elapsed = performance.now() - startTs;
+    liveFill.style.width = Math.min(100, (elapsed / durMs) * 100) + "%";
+    if(elapsed < durMs){ progressRaf = requestAnimationFrame(tick); }
+  })();
+
+  playTimer = setTimeout(()=>{
+    if(gen !== playGeneration) return;
+    try{ audioEl.pause(); }catch(e){}
+    btn.classList.remove("playing");
+    if(progressRaf){ cancelAnimationFrame(progressRaf); progressRaf = null; }
+    liveFill.style.width = "100%";
+    cleanupTimer = setTimeout(()=>{
+      if(gen !== playGeneration) return;
+      liveWrap.classList.remove("active");
+      liveFill.style.width = "0%";
+    }, 250);
+  }, durMs);
+}
+
+$("btnPlay").onclick = ()=> playClip();
+
+/* ---- search / suggestions ---- */
+const searchInput = $("searchInput");
+searchInput.addEventListener("input", ()=>{
+  const q = searchInput.value.trim().toLowerCase();
+  const box = $("suggestions");
+  if(!q || !round){ box.classList.add("hidden"); box.innerHTML=""; return; }
+  const matches = round.pool.filter(s =>
+    s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q)
+  ).slice(0,6);
+  if(!matches.length){ box.classList.add("hidden"); box.innerHTML=""; return; }
+  box.innerHTML = "";
+  matches.forEach(s=>{
+    const item = document.createElement("div");
+    item.className = "sugg-item";
+    item.innerHTML = `${escapeHtml(s.title)}<div class="a">${escapeHtml(s.artist)}</div>`;
+    item.onclick = ()=>{ box.classList.add("hidden"); searchInput.value=""; submitGuess(s); };
+    box.appendChild(item);
+  });
+  box.classList.remove("hidden");
+});
+document.addEventListener("click", e=>{
+  if(!e.target.closest(".search-wrap")) $("suggestions").classList.add("hidden");
+});
+
+function submitGuess(songObj){
+  if(!round || round.finished) return;
+  const correct = songObj.title === round.songDef.title && songObj.artist === round.songDef.artist;
+  round.attempts.push({ label:`${songObj.title} — ${songObj.artist}`, correct, skipped:false });
+  if(correct){ endRound(true); } else { advance(); }
+}
+
+$("btnSkip").onclick = ()=>{
+  if(!round || round.finished) return;
+  round.attempts.push({ label:"", correct:false, skipped:true });
+  advance();
+};
+
+function advance(){
+  if(round.attempts.length >= SCHEDULE.length){ endRound(false); }
+  else { renderRound(); }
+}
+
+function endRound(won){
+  round.finished = true; round.won = won;
+  playGeneration++;
+  haltPlayback();
+  $("btnPlay").classList.remove("playing");
+  resetLiveProgress();
+  renderRound();
+  renderReveal(won);
+}
+
+function renderReveal(won){
+  $("guessArea").classList.add("hidden");
+  const area = $("revealArea");
+  area.classList.remove("hidden");
+  const m = round.meta;
+  area.innerHTML = `
+    <div class="reveal">
+      <div class="status ${won?'win':'lose'}">${won ? "Got it!" : "Revealed"}</div>
+      ${m.artwork ? `<img src="${m.artwork}">` : ""}
+      <div class="t">${escapeHtml(m.canonicalTitle)}</div>
+      <div class="a">${escapeHtml(m.canonicalArtist)}</div>
+      <div class="reveal-actions">
+        <button class="btn-hear" id="btnHearFull">▶ Hear it</button>
+        <button class="btn-next" id="btnNextRound">Next song</button>
+      </div>
+    </div>
+  `;
+  $("btnHearFull").onclick = ()=>{
+    const full = (audioEl.duration && isFinite(audioEl.duration)) ? audioEl.duration*1000 : 30000;
+    playClip(full, true);
+  };
+  $("btnNextRound").onclick = ()=> startRound();
+}
+
+/* =========================================================
    UTIL
    ========================================================= */
 function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent = s==null?"":s; return d.innerHTML; }
 
 renderTabs();
+startRound();
 
 })();
 </script>
