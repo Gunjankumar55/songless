@@ -333,6 +333,55 @@
 
   <div class="tabs" id="tabs"></div>
 
+  <div class="console">
+    <div class="console-bar">
+      <div class="console-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+      <span class="console-bar-label" id="consoleBarLabel">songless — all</span>
+    </div>
+    <div class="console-inner">
+      <div class="attempts" id="attempts"></div>
+
+      <div class="dur-label" id="durLabel">0.2 seconds</div>
+      <div class="dur-bar" id="durBar"></div>
+
+      <div class="live-progress" id="liveProgress"><div class="live-progress-fill" id="liveProgressFill"></div></div>
+
+      <div class="play-row">
+        <button class="play-btn" id="btnPlay">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="#0a1a0d"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+      </div>
+
+      <div id="guessArea">
+        <div class="guess-row">
+          <div class="search-wrap">
+            <input type="text" id="searchInput" placeholder="Search a song" autocomplete="off">
+            <div class="suggestions hidden" id="suggestions"></div>
+          </div>
+          <button class="skip-btn" id="btnSkip">Skip</button>
+        </div>
+      </div>
+
+      <div id="revealArea" class="hidden"></div>
+    </div>
+  </div>
+
+  <div class="home-note">
+    <div class="panel-bar">
+      <h3>How to play</h3>
+      <div class="panel-dots"><span></span><span></span><span></span></div>
+    </div>
+    <div class="note-body">
+      <div class="steps-row">
+        <span class="step">Hit play</span><span class="step-arrow">→</span>
+        <span class="step">Guess or skip</span><span class="step-arrow">→</span>
+        <span class="step">Clip gets longer</span><span class="step-arrow">→</span>
+        <span class="step">6 tries, 16s max</span>
+      </div>
+      <div class="note-sub">Press <kbd>Space</kbd> to replay a clip · Open Players to track scores in a group.</div>
+    </div>
+  </div>
+
   <footer class="site-footer">
     <a href="https://github.com/Gunjankumar55" target="_blank" rel="noopener noreferrer" class="footer-credit">
       Built by <span>Gunjan</span>
