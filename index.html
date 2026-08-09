@@ -331,6 +331,7 @@
     </div>
     <div class="header-actions">
       <button class="icon-btn" id="btnPlayers">🏆 Players</button>
+      <button class="icon-btn" id="btnImport">➕ Import Playlist</button>
     </div>
   </header>
 
@@ -347,6 +348,21 @@
         <button id="btnAddPlayer">Add</button>
       </div>
       <div id="playerList"></div>
+    </div>
+  </div>
+
+  <div class="players-panel hidden" id="importPanel">
+    <div class="panel-bar">
+      <h3>➕ Import a Spotify Playlist</h3>
+      <div class="panel-dots"><span></span><span></span><span></span></div>
+    </div>
+    <div class="panel-body">
+      <div class="player-add">
+        <input type="text" id="importUrlInput" placeholder="Paste a Spotify playlist link">
+        <button id="btnDoImport">Import</button>
+      </div>
+      <div class="import-status" id="importStatus"></div>
+      <div class="import-note">Works with <b>public</b> playlists only. Songs land in a new category tab, saved to this browser so it's still there next time you visit.</div>
     </div>
   </div>
 
@@ -2377,6 +2393,109 @@ function renderPlayers(){
 }
 
 /* =========================================================
+   IMPORT PLAYLIST — pastes a public Spotify playlist link,
+   calls our own /api/spotify-playlist serverless function
+   (keeps the Client Secret server-side), and turns the result
+   into a new browsable category. Persisted per-browser via
+   localStorage, so it survives reloads on this device.
+   Requires the site to be running on Vercel with the /api
+   function deployed — won't work opening the html file locally.
+   ========================================================= */
+let importOpen = false;
+const IMPORTED_STORE_KEY = "songless_imported_playlists";
+
+function loadImportedPlaylists(){
+  let saved = [];
+  try{ saved = JSON.parse(localStorage.getItem(IMPORTED_STORE_KEY) || "[]"); }catch(e){ saved = []; }
+  saved.forEach(entry=>{
+    if(SONGS[entry.key]) return; // already present this session
+    SONGS[entry.key] = { label: entry.label, list: entry.list };
+    CATS.push({ key: entry.key, label: entry.label });
+  });
+}
+function saveImportedPlaylist(key, label, list){
+  let saved = [];
+  try{ saved = JSON.parse(localStorage.getItem(IMPORTED_STORE_KEY) || "[]"); }catch(e){ saved = []; }
+  saved = saved.filter(e=>e.key !== key);
+  saved.push({ key, label, list });
+  try{ localStorage.setItem(IMPORTED_STORE_KEY, JSON.stringify(saved)); }catch(e){ /* storage full or blocked — import still works this session */ }
+}
+function slugifyCatKey(name){
+  const base = "imp_" + name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30);
+  let key = base, n = 2;
+  while(SONGS[key]){ key = `${base}_${n}`; n++; }
+  return key;
+}
+
+$("btnImport").onclick = ()=>{
+  importOpen = !importOpen;
+  $("importPanel").classList.toggle("hidden", !importOpen);
+  $("btnImport").classList.toggle("active", importOpen);
+};
+
+$("btnDoImport").onclick = doImportPlaylist;
+$("importUrlInput").addEventListener("keydown", e=>{ if(e.key==="Enter") doImportPlaylist(); });
+
+async function doImportPlaylist(){
+  const input = $("importUrlInput");
+  const statusEl = $("importStatus");
+  const url = input.value.trim();
+  statusEl.className = "import-status";
+  if(!url || !url.includes("spotify.com/playlist/")){
+    statusEl.textContent = "That doesn't look like a Spotify playlist link.";
+    statusEl.classList.add("error");
+    return;
+  }
+  statusEl.textContent = "Fetching tracks from Spotify…";
+  $("btnDoImport").disabled = true;
+
+  try{
+    const res = await fetch(`/api/spotify-playlist?url=${encodeURIComponent(url)}`);
+
+    // The endpoint should always return JSON. If it doesn't, we've hit a
+    // 404/500 HTML page instead — meaning the serverless function isn't
+    // reachable at this path (not deployed, wrong folder, or running the
+    // file locally without Vercel). Say that plainly instead of leaking a
+    // raw "Unexpected token" JSON parse error.
+    const ctype = res.headers.get("content-type") || "";
+    if(!ctype.includes("application/json")){
+      if(res.status === 404){
+        throw new Error("API not found (404). The /api/spotify-playlist function isn't live at this URL — see the setup notes.");
+      }
+      throw new Error(`API returned ${res.status}, not JSON. The serverless function isn't responding correctly.`);
+    }
+
+    const data = await res.json();
+    if(!res.ok) throw new Error([data.error, data.detail].filter(Boolean).join(" — ") || `Import failed (${res.status})`);
+    if(!data.tracks || !data.tracks.length) throw new Error("That playlist came back empty — is it public?");
+
+    const key = slugifyCatKey(data.name || "playlist");
+    const label = data.name || "Imported";
+    const list = data.tracks;
+
+    SONGS[key] = { label, list };
+    CATS.push({ key, label });
+    saveImportedPlaylist(key, label, list);
+
+    statusEl.textContent = `Added "${label}" — ${list.length} songs.`;
+    statusEl.classList.add("ok");
+    input.value = "";
+
+    category = key;
+    renderTabs();
+    startRound();
+  }catch(e){
+    const msg = (e && e.message) || "";
+    statusEl.textContent = /failed to fetch|networkerror|load failed/i.test(msg)
+      ? "Couldn't reach the import service — this needs the live Vercel deployment, not a local file."
+      : (msg || "Something went wrong.");
+    statusEl.classList.add("error");
+  }finally{
+    $("btnDoImport").disabled = false;
+  }
+}
+
+/* =========================================================
    ROUND FLOW
    ========================================================= */
 async function startRound(){
@@ -2620,6 +2739,7 @@ function renderReveal(won){
 function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent = s==null?"":s; return d.innerHTML; }
 
+loadImportedPlaylists();
 renderTabs();
 renderPlayers();
 startRound();
