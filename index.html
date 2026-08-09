@@ -419,6 +419,10 @@
     <a href="https://github.com/Gunjankumar55" target="_blank" rel="noopener noreferrer" class="footer-credit">
       Built by <span>Gunjan</span>
     </a>
+    <span class="visit-counter" id="visitCounter">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span id="visitCount">—</span>
+    </span>
   </footer>
 
 </div>
@@ -2739,10 +2743,50 @@ function renderReveal(won){
 function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent = s==null?"":s; return d.innerHTML; }
 
+/* =========================================================
+   VISITOR COUNTER (free public counter, no signup)
+   Tries countapi.mileshilliard.com first — counts page loads,
+   not verified unique humans. That whole category of free
+   anonymous counters is notoriously flaky (the original
+   countapi.xyz is dead, several alternatives are too), so if
+   it doesn't respond, this falls back to a local per-device
+   count via localStorage rather than just disappearing. The
+   label makes clear which one is showing.
+   ========================================================= */
+function localVisitFallback(){
+  try{
+    const n = (parseInt(localStorage.getItem("songless_local_visits") || "0", 10) || 0) + 1;
+    localStorage.setItem("songless_local_visits", String(n));
+    return n;
+  }catch(e){ return null; }
+}
+
+async function initVisitCounter(){
+  const wrap = $("visitCounter");
+  const el = $("visitCount");
+  if(!wrap || !el) return;
+  try{
+    const res = await fetch("https://countapi.mileshilliard.com/api/v1/hit/songless_gunjankumar55_plays");
+    if(!res.ok) throw new Error("counter unavailable");
+    const data = await res.json();
+    const n = parseInt(data.value, 10);
+    if(isNaN(n)) throw new Error("bad value");
+    el.textContent = `View count: ${n.toLocaleString()}`;
+  }catch(e){
+    const n = localVisitFallback();
+    if(n == null){ wrap.style.display = "none"; return; }
+    el.textContent = `View count: ${n.toLocaleString()}`;
+  }
+}
+
+/* =========================================================
+   BOOT
+   ========================================================= */
 loadImportedPlaylists();
 renderTabs();
 renderPlayers();
 startRound();
+initVisitCounter();
 
 })();
 </script>
