@@ -329,9 +329,26 @@
         <div class="tag">guess it from the clip</div>
       </div>
     </div>
+    <div class="header-actions">
+      <button class="icon-btn" id="btnPlayers">🏆 Players</button>
+    </div>
   </header>
 
   <div class="tabs" id="tabs"></div>
+
+  <div class="players-panel hidden" id="playersPanel">
+    <div class="panel-bar">
+      <h3>🏆 Scoreboard</h3>
+      <div class="panel-dots"><span></span><span></span><span></span></div>
+    </div>
+    <div class="panel-body">
+      <div class="player-add">
+        <input type="text" id="playerNameInput" placeholder="Add a player's name" maxlength="20">
+        <button id="btnAddPlayer">Add</button>
+      </div>
+      <div id="playerList"></div>
+    </div>
+  </div>
 
   <div class="console">
     <div class="console-bar">
@@ -1210,6 +1227,43 @@ function renderTabs(){
 }
 
 /* =========================================================
+   PLAYERS PANEL
+   ========================================================= */
+$("btnPlayers").onclick = ()=>{
+  playersOpen = !playersOpen;
+  $("playersPanel").classList.toggle("hidden", !playersOpen);
+  $("btnPlayers").classList.toggle("active", playersOpen);
+};
+$("btnAddPlayer").onclick = addPlayer;
+$("playerNameInput").addEventListener("keydown", e=>{ if(e.key==="Enter") addPlayer(); });
+function addPlayer(){
+  const input = $("playerNameInput");
+  const name = input.value.trim();
+  if(!name) return;
+  players.push({id: Date.now()+Math.random(), name, score:0});
+  input.value = "";
+  renderPlayers();
+}
+function renderPlayers(){
+  const wrap = $("playerList");
+  if(!players.length){ wrap.innerHTML = `<div class="players-empty">No players yet — add names above, then tap + when someone gets it right.</div>`; return; }
+  wrap.innerHTML = "";
+  players.forEach(p=>{
+    const row = document.createElement("div");
+    row.className = "player-row";
+    row.innerHTML = `
+      <span class="pname">${escapeHtml(p.name)}</span>
+      <span class="pscore">${p.score}</span>
+      <button class="plus" data-act="plus">+1</button>
+      <button class="remove" data-act="remove">✕</button>
+    `;
+    row.querySelector('[data-act="plus"]').onclick = ()=>{ p.score++; renderPlayers(); };
+    row.querySelector('[data-act="remove"]').onclick = ()=>{ players = players.filter(x=>x.id!==p.id); renderPlayers(); };
+    wrap.appendChild(row);
+  });
+}
+
+/* =========================================================
    ROUND FLOW
    ========================================================= */
 async function startRound(){
@@ -1454,6 +1508,7 @@ function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.
 function escapeHtml(s){ const d=document.createElement("div"); d.textContent = s==null?"":s; return d.innerHTML; }
 
 renderTabs();
+renderPlayers();
 startRound();
 
 })();
